@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Campus Navigation & Interactive Map</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --background: #0b1120;
+      --card: #131d33;
+      --card-border: #233554;
+      --foreground: #f1f5f9;
+      --muted-foreground: #94a3b8;
+      --primary: #38bdf8;
+      --primary-glow: rgba(56, 189, 248, 0.4);
+      --accent: #10b981;
+      --danger: #f43f5e;
+      --warning: #f59e0b;
+      --road-color: #334155;
+      --road-dash: #64748b;
+    }
+    .light {
+      --background: #f8fafc;
+      --card: #ffffff;
+      --card-border: #e2e8f0;
+      --foreground: #0f172a;
+      --muted-foreground: #64748b;
+      --primary: #0284c7;
+      --primary-glow: rgba(2, 132, 199, 0.25);
+      --accent: #059669;
+      --danger: #e11d48;
+      --warning: #d97706;
+      --road-color: #cbd5e1;
+      --road-dash: #94a3b8;
+    }
+
+    body {
+      background-color: var(--background);
+      color: var(--foreground);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    /* Animated route styling */
+    @keyframes dashMove {
+      to {
+        stroke-dashoffset: -40;
+      }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.18); opacity: 0.5; }
+    }
+    @keyframes pinBounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    .route-active {
+      stroke-dasharray: 10, 6;
+      animation: dashMove 1.2s linear infinite;
+    }
+    .pulse-ring {
+      animation: pulseGlow 2s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .pin-bounce {
+      animation: pinBounce 1.5s ease-in-out infinite;
+    }
+
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0,0,0,0.05);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--card-border);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--primary);
+    }
+
+    .node-target {
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .node-target:hover {
+      filter: drop-shadow(0 0 10px var(--primary));
+    }
+  </style>
+</head>
+<body class="p-3 md:p-6 transition-colors duration-300">
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Top Header Bar -->
+    <header class="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-4 md:p-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-sky-500/20 font-bold text-2xl">
+          🧭
+        </div>
+        <div>
+          <h1 class="text-xl md:text-2xl font-bold tracking-tight text-[var(--foreground)] flex items-center gap-2">
+            Campus Route Navigator
+            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">Connected Road Network</span>
+          </h1>
+          <p class="text-xs md:text-sm text-[var(--muted-foreground)] mt-0.5">
+            Full street connectivity including Eastern Avenue linking Building 3, Canteen, Building 4, and the avenue in front of Building 5.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Theme Toggle -->
+        <button id="themeToggle" class="px-3.5 py-2 rounded-xl border border-[var(--card-border)] bg-transparent hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors">
+          <span id="themeIcon">☀️</span>
+          <span class="hidden sm:inline">Theme</span>
+        </button>
+        <!-- Print / Export -->
+        <button onclick="window.print()" class="px-3.5 py-2 rounded-xl border border-[var(--card-border)] bg-transparent hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors">
+          <span>🖨️</span>
+          <span class="hidden sm:inline">Print Route</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Navigation & Map Area -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Left Column: Controls & Turn-by-Turn Card (5 Cols on large screen) -->
+      <div class="lg:col-span-5 space-y-6">
+
+        <!-- Selector Card -->
+        <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-5 shadow-lg space-y-4">
+          <div class="flex items-center justify-between border-b border-[var(--card-border)] pb-3">
+            <h2 class="font-semibold text-base text-[var(--foreground)] flex items-center gap-2">
+              <span>📍</span> Choose Waypoints
+            </h2>
+            <button id="swapBtn" title="Swap Start and Destination" class="text-xs px-2.5 py-1 rounded-lg border border-[var(--card-border)] hover:border-sky-500 text-sky-400 hover:bg-sky-500/10 flex items-center gap-1 transition-all">
+              <span>⇅</span> Swap
+            </button>
+          </div>
+
+          <!-- Start Selector -->
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-sm shadow-emerald-500/50"></span>
+              Starting Location
+            </label>
+            <select id="startSelect" class="w-full bg-[var(--background)] border border-[var(--card-border)] rounded-xl px-3.5 py-2.5 text-sm text-[var(--foreground)] focus:ring-2 focus:ring-sky-500 focus:outline-none transition-all">
+              <!-- Dynamically Populated -->
+            </select>
+          </div>
+
+          <!-- Destination Selector -->
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block shadow-sm shadow-rose-500/50"></span>
+              Destination
+            </label>
+            <select id="destSelect" class="w-full bg-[var(--background)] border border-[var(--card-border)] rounded-xl px-3.5 py-2.5 text-sm text-[var(--foreground)] focus:ring-2 focus:ring-sky-500 focus:outline-none transition-all">
+              <!-- Dynamically Populated -->
+            </select>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="grid grid-cols-2 gap-3 pt-2">
+            <button id="findRouteBtn" class="w-full bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold py-2.5 px-4 rounded-xl shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 transition-all transform active:scale-[0.98]">
+              <span>🚀</span> Find Route
+            </button>
+            <button id="clearBtn" class="w-full bg-[var(--background)] hover:bg-white/5 border border-[var(--card-border)] text-[var(--muted-foreground)] font-medium py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all">
+              <span>↺</span> Reset
+            </button>
+          </div>
+
+          <!-- Quick Presets -->
+          <div class="pt-2 border-t border-[var(--card-border)]">
+            <p class="text-xs text-[var(--muted-foreground)] mb-2 font-medium">Quick Direct Routes:</p>
+            <div class="flex flex-wrap gap-1.5 text-xs">
+              <button onclick="setRoute(19, 13)" class="px-2.5 py-1 rounded-lg bg-[var(--background)] hover:bg-sky-500/10 hover:text-sky-400 border border-[var(--card-border)] transition-colors">
+                ⚡ B5 ➔ B3 (Direct front road)
+              </button>
+              <button onclick="setRoute(19, 16)" class="px-2.5 py-1 rounded-lg bg-[var(--background)] hover:bg-sky-500/10 hover:text-sky-400 border border-[var(--card-border)] transition-colors">
+                ⚡ B5 ➔ B4 (Front avenue)
+              </button>
+              <button onclick="setRoute(13, 16)" class="px-2.5 py-1 rounded-lg bg-[var(--background)] hover:bg-sky-500/10 hover:text-sky-400 border border-[var(--card-border)] transition-colors">
+                B3 ➔ B4 (Past Canteen)
+              </button>
+              <button onclick="setRoute(5, 9)" class="px-2.5 py-1 rounded-lg bg-[var(--background)] hover:bg-sky-500/10 hover:text-sky-400 border border-[var(--card-border)] transition-colors">
+                Eco Canteen ➔ B2
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Journey Summary Metric Cards -->
+        <div id="routeMetrics" class="grid grid-cols-2 sm:grid-cols-4 gap-3 hidden">
+          <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-3 text-center">
+            <span class="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider block">Total Dist</span>
+            <span id="metricDist" class="text-lg font-bold text-sky-400 mt-0.5 block">0 m</span>
+          </div>
+          <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-3 text-center">
+            <span class="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider block">Walk Time</span>
+            <span id="metricTime" class="text-lg font-bold text-emerald-400 mt-0.5 block">0 min</span>
+          </div>
+          <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-3 text-center">
+            <span class="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider block">Steps</span>
+            <span id="metricSteps" class="text-lg font-bold text-amber-400 mt-0.5 block">~0</span>
+          </div>
+          <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-3 text-center">
+            <span class="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider block">Burn</span>
+            <span id="metricCal" class="text-lg font-bold text-rose-400 mt-0.5 block">0 kcal</span>
+          </div>
+        </div>
+
+        <!-- Turn-by-Turn Waypoints Card -->
+        <div id="directionsCard" class="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-5 shadow-lg space-y-3 hidden">
+          <div class="flex items-center justify-between border-b border-[var(--card-border)] pb-3">
+            <h3 class="font-semibold text-sm text-[var(--foreground)] flex items-center gap-2">
+              <span>🚶</span> Navigation Itinerary
+            </h3>
+            <span id="stepCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium">
+              0 Checkpoints
+            </span>
+          </div>
+
+          <div id="stepsList" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+            <!-- Dynamically populated step cards -->
+          </div>
+        </div>
+
+        <!-- Building Facility Guide Directory -->
+        <div class="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-5 shadow-lg space-y-3">
+          <h3 class="font-semibold text-sm text-[var(--foreground)] flex items-center gap-2 border-b border-[var(--card-border)] pb-2.5">
+            <span>🏢</span> Campus Building Directory
+          </h3>
+          <div class="space-y-2 text-xs">
+            <div class="p-2.5 rounded-xl bg-[var(--background)] border border-[var(--card-border)]">
+              <span class="font-bold text-sky-400">Building 1 (Eco Campus):</span> Eco Canteen, Auditorium, Campus Recruitment Centre
+            </div>
+            <div class="p-2.5 rounded-xl bg-[var(--background)] border border-[var(--card-border)]">
+              <span class="font-bold text-sky-400">Building 2:</span> BTech Department, BSc Department, Building 2 Parking
+            </div>
+            <div class="p-2.5 rounded-xl bg-[var(--background)] border border-[var(--card-border)]">
+              <span class="font-bold text-sky-400">Building 3 & 4 (Eastern Wing):</span> Building 3, Small Canteen, Building 4, Stationery Shop
+            </div>
+            <div class="p-2.5 rounded-xl bg-[var(--background)] border border-[var(--card-border)]">
+              <span class="font-bold text-sky-400">Building 5:</span> Central Library, Accounts Section, SFC Counters
+            </div>
+            <div class="p-2.5 rounded-xl bg-[var(--background)] border border-[var(--card-border)]">
+              <span class="font-bold text-sky-400">Southern Area:</span> Basketball Court, South Parking, South Campus Exit
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Interactive Vector Campus Map (7 Cols on large screen) -->
+      <div class="lg:col-span-7 bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-4 md:p-6 shadow-xl relative overflow-hidden">
+        
+        <!-- Map Header Controls -->
+        <div class="flex items-center justify-between mb-3 text-xs text-[var(--muted-foreground)]">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-[var(--foreground)]">CAMPUS SCHEMATIC MAP</span>
+            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">Interactive Click-to-Route</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 bg-emerald-500 rounded-sm inline-block"></span> Start</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 bg-rose-500 rounded-sm inline-block"></span> End</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 bg-sky-400 rounded-sm inline-block"></span> Route</span>
+          </div>
+        </div>
+
+        <!-- SVG Visual Campus Map -->
+        <div class="relative w-full rounded-xl bg-[var(--background)] border border-[var(--card-border)] p-2 overflow-hidden shadow-inner flex justify-center items-center">
+          <svg id="campusMapSvg" viewBox="0 0 850 1020" class="w-full h-auto max-h-[850px] select-none">
+            <defs>
+              <!-- Glowing filter for route -->
+              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+              
+              <!-- Subtle blueprint grid pattern -->
+              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" stroke-opacity="0.04" stroke-width="1"/>
+              </pattern>
+
+              <!-- Parking hatch pattern -->
+              <pattern id="parkingHatch" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                <line x1="0" y1="0" x2="0" y2="12" stroke="currentColor" stroke-opacity="0.12" stroke-width="2" />
+              </pattern>
+            </defs>
+
+            <!-- Background Grid -->
+            <rect width="850" height="1020" fill="url(#grid)" class="text-slate-500" />
+
+            <!-- Compass / Orientation Indicator (Top-Left matching sketch) -->
+            <g transform="translate(60, 45)">
+              <polygon points="20,0 35,15 20,30 5,15" fill="none" stroke="currentColor" stroke-width="2.5" class="text-slate-400" />
+              <line x1="50" y1="15" x2="85" y2="15" stroke="currentColor" stroke-width="3" stroke-linecap="round" class="text-slate-400" />
+              <polygon points="85,15 75,9 75,21" fill="currentColor" class="text-slate-400" />
+              <text x="50" y="38" font-size="11" font-weight="bold" fill="currentColor" class="text-slate-400">CAMPUS ORIENTATION</text>
+            </g>
+
+            <!-- ================= ROADS LAYER ================= -->
+            <g id="roadsGroup">
+              <!-- Top Horizontal Road (Across whole campus) -->
+              <line x1="20" y1="110" x2="830" y2="110" stroke="var(--road-color)" stroke-width="14" stroke-linecap="round" />
+              <line x1="20" y1="110" x2="830" y2="110" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+
+              <!-- North Entry branch road going down to East Junction -->
+              <line x1="610" y1="110" x2="610" y2="220" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+
+              <!-- Road connecting West Entry to Eco Campus & East Junction -->
+              <line x1="220" y1="220" x2="630" y2="220" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+              <line x1="220" y1="220" x2="630" y2="220" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+
+              <!-- Road entering Eco Campus precinct -->
+              <line x1="380" y1="220" x2="380" y2="310" stroke="var(--road-color)" stroke-width="12" />
+
+              <!-- Main Central Vertical Road (Spine of the campus) -->
+              <line x1="380" y1="310" x2="380" y2="940" stroke="var(--road-color)" stroke-width="14" stroke-linecap="round" />
+              <line x1="380" y1="310" x2="380" y2="940" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+
+              <!-- Branch road to Building 2 -->
+              <line x1="380" y1="410" x2="480" y2="410" stroke="var(--road-color)" stroke-width="10" stroke-linecap="round" />
+
+              <!-- Middle Parking Top Road (Main Road to Building 3) -->
+              <line x1="380" y1="520" x2="610" y2="520" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+              <line x1="380" y1="520" x2="610" y2="520" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+
+              <!-- Middle Parking Bottom Road (Main Road below Building 4) -->
+              <line x1="380" y1="655" x2="610" y2="655" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+              <line x1="380" y1="655" x2="610" y2="655" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+
+              <!-- EASTERN AVENUE: CONNECTS BUILDING 3, CANTEEN, BUILDING 4, AND CONTINUES DOWN IN FRONT OF BUILDING 5! -->
+              <line x1="610" y1="480" x2="610" y2="820" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+              <line x1="610" y1="480" x2="610" y2="820" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+              <text x="622" y="700" font-size="9" font-weight="bold" fill="var(--muted-foreground)">Eastern Avenue</text>
+
+              <!-- ROAD RUNNING RIGHT IN FRONT OF BUILDING 5 (CONNECTING MAIN ROAD, B5, AND EASTERN AVENUE) -->
+              <line x1="380" y1="720" x2="610" y2="720" stroke="var(--road-color)" stroke-width="12" stroke-linecap="round" />
+              <line x1="380" y1="720" x2="610" y2="720" stroke="var(--road-dash)" stroke-width="1.5" stroke-dasharray="8,6" />
+              <text x="515" y="742" font-size="9" font-weight="bold" fill="var(--muted-foreground)">Road in front of B5</text>
+
+              <!-- Branch road to Basketball Court & South Parking -->
+              <line x1="380" y1="800" x2="610" y2="800" stroke="var(--road-color)" stroke-width="10" stroke-linecap="round" />
+            </g>
+
+            <!-- ================= BUILDINGS & STRUCTURES LAYER ================= -->
+
+            <!-- TOP RIGHT PARKING (Node 24) -->
+            <g id="structParkingEco" class="node-target" onclick="nodeClicked(24)">
+              <rect x="640" y="145" width="65" height="135" rx="6" fill="var(--card)" stroke="var(--card-border)" stroke-width="2.5" />
+              <rect x="640" y="145" width="65" height="135" rx="6" fill="url(#parkingHatch)" class="text-slate-400" />
+              <text x="672" y="220" font-size="14" font-weight="bold" font-style="italic" fill="var(--foreground)" transform="rotate(-90 672 220)" text-anchor="middle">Parking</text>
+              <rect x="705" y="145" width="95" height="65" rx="6" fill="var(--card)" stroke="var(--card-border)" stroke-width="2.5" />
+              <rect x="705" y="145" width="95" height="65" rx="6" fill="url(#parkingHatch)" class="text-slate-400" />
+              <text x="752" y="183" font-size="14" font-weight="bold" font-style="italic" fill="var(--foreground)" text-anchor="middle">Parking</text>
+            </g>
+
+            <!-- TOP MIDDLE BLANK RECTANGLE (Matching sketch) -->
+            <rect x="400" y="140" width="150" height="65" rx="4" fill="var(--card)" stroke="var(--card-border)" stroke-width="2.5" opacity="0.8" />
+            <text x="475" y="177" font-size="11" font-weight="bold" fill="var(--muted-foreground)" text-anchor="middle">Auditorium / Block</text>
+
+            <!-- ECO CAMPUS PRECINCT (Nodes 3, 4, 5, 6, 7) -->
+            <g id="ecoPrecinct">
+              <rect x="320" y="220" width="260" height="95" rx="6" fill="var(--card)" stroke="var(--card-border)" stroke-width="2.5" />
+              <text x="326" y="235" font-size="9" font-weight="bold" fill="var(--muted-foreground)" letter-spacing="1">ECO CAMPUS PRECINCT</text>
+
+              <!-- Eco Canteen (Node 5) -->
+              <g id="node5" class="node-target" onclick="nodeClicked(5)">
+                <rect x="350" y="235" width="65" height="42" rx="10" fill="#0284c7" fill-opacity="0.2" stroke="#38bdf8" stroke-width="2" />
+                <text x="382" y="254" font-size="10" font-weight="bold" fill="#38bdf8" text-anchor="middle">Eco</text>
+                <text x="382" y="267" font-size="10" font-weight="bold" fill="#38bdf8" text-anchor="middle">canteen</text>
+              </g>
+
+              <!-- Auditorium Pill (Node 6) -->
+              <g id="node6" class="node-target" onclick="nodeClicked(6)">
+                <rect x="340" y="282" width="75" height="24" rx="12" fill="var(--background)" stroke="var(--card-border)" stroke-width="2" />
+                <text x="377" y="298" font-size="10" font-weight="semibold" fill="var(--foreground)" text-anchor="middle">Auditorium</text>
+              </g>
+
+              <!-- Building 1 Circle (Node 4) -->
+              <g id="node4" class="node-target" onclick="nodeClicked(4)">
+                <circle cx="475" cy="265" r="28" fill="var(--background)" stroke="var(--foreground)" stroke-width="3" />
+                <text x="475" y="272" font-size="18" font-weight="bold" fill="var(--foreground)" text-anchor="middle">1</text>
+                <text x="475" y="306" font-size="10" font-weight="semibold" fill="var(--muted-foreground)" text-anchor="middle">Eco Building</text>
+              </g>
+            </g>
+
+            <!-- BUILDING 2 (Node 9) -->
+            <g id="node9" class="node-target" onclick="nodeClicked(9)">
+              <circle cx="490" cy="410" r="24" fill="var(--background)" stroke="var(--foreground)" stroke-width="3" />
+              <text x="490" y="417" font-size="17" font-weight="bold" fill="var(--foreground)" text-anchor="middle">2</text>
+              <text x="535" y="415" font-size="11" font-weight="bold" fill="var(--foreground)">Building 2</text>
+              <text x="535" y="428" font-size="9" fill="var(--muted-foreground)">BTech / BSc</text>
+            </g>
+
+            <!-- PARKING BELOW BUILDING 2 (Node 25) -->
+            <g id="node25" class="node-target" onclick="nodeClicked(25)">
+              <rect x="460" y="445" width="125" height="55" rx="4" fill="var(--card)" stroke="var(--card-border)" stroke-width="2.5" />
+              <rect x="460" y="445" width="125" height="55" rx="4" fill="url(#parkingHatch)" class="text-slate-400" />
+              <text x="555" y="490" font-size="13" font-weight="bold" font-style="italic" fill="var(--foreground)" text-anchor="end">Parking</text>
+            </g>
+
+            <!-- MIDDLE PARKING COMPOUND (Node 26) -->
+            <g id="node26" class="node-target" onclick="nodeClicked(26)">
+              <rect x="380" y="520" width="230" height="135" rx="4" fill="none" stroke="var(--card-border)" stroke-width="2.5" />
+              <rect x="440" y="555" width="120" height="65" rx="4" fill="var(--card)" stroke="var(--card-border)" stroke-width="2" />
+              <rect x="440" y="555" width="120" height="65" rx="4" fill="url(#parkingHatch)" class="text-slate-400" />
+              <text x="475" y="594" font-size="14" font-weight="bold" font-style="italic" fill="var(--foreground)">parking</text>
+            </g>
+
+            <!-- BUILDING 3 & 4 SIDE -->
+            <!-- Building 3 Circle (Node 13) -->
+            <g id="node13" class="node-target" onclick="nodeClicked(13)">
+              <circle cx="650" cy="520" r="26" fill="var(--background)" stroke="var(--foreground)" stroke-width="3" />
+              <text x="650" y="527" font-size="17" font-weight="bold" fill="var(--foreground)" text-anchor="middle">3</text>
+              <text x="686" y="524" font-size="11" font-weight="bold" fill="var(--foreground)">Building 3</text>
+            </g>
+
+            <!-- Small Canteen Capsule (Node 14) -->
+            <g id="node14" class="node-target" onclick="nodeClicked(14)">
+              <rect x="625" y="565" width="50" height="22" rx="11" fill="#0284c7" fill-opacity="0.2" stroke="#38bdf8" stroke-width="2" />
+              <text x="650" y="580" font-size="9" font-weight="bold" fill="#38bdf8" text-anchor="middle">Canteen</text>
+            </g>
+
+            <!-- Building 4 Circle (Node 16) -->
+            <g id="node16" class="node-target" onclick="nodeClicked(16)">
+              <circle cx="650" cy="635" r="26" fill="var(--background)" stroke="var(--foreground)" stroke-width="3" />
+              <text x="650" y="642" font-size="17" font-weight="bold" fill="var(--foreground)" text-anchor="middle">4</text>
+              <text x="686" y="638" font-size="11" font-weight="bold" fill="var(--foreground)">Building 4</text>
+              <text x="686" y="650" font-size="9" fill="var(--muted-foreground)">Stationery</text>
+            </g>
+
+            <!-- BUILDING 5 (Node 19) -->
+            <g id="node19" class="node-target" onclick="nodeClicked(19)">
+              <circle cx="480" cy="720" r="26" fill="var(--background)" stroke="var(--foreground)" stroke-width="3" />
+              <text x="480" y="727" font-size="17" font-weight="bold" fill="var(--foreground)" text-anchor="middle">5</text>
+              <text x="430" y="700" font-size="11" font-weight="bold" fill="var(--foreground)">Building 5</text>
+              <text x="430" y="712" font-size="9" fill="var(--muted-foreground)">Library & Accounts</text>
+            </g>
+
+            <!-- BASKETBALL COURT AREA (Node 27) -->
+            <g id="node27" class="node-target" onclick="nodeClicked(27)">
+              <path d="M 425 825 L 425 765 L 510 765 L 510 825" fill="none" stroke="var(--card-border)" stroke-width="3" />
+              <line x1="425" y1="845" x2="425" y2="925" stroke="var(--card-border)" stroke-width="3" />
+              <rect x="510" y="765" width="135" height="80" rx="4" fill="#047857" fill-opacity="0.15" stroke="#10b981" stroke-width="2.5" />
+              <line x1="577" y1="765" x2="577" y2="845" stroke="#10b981" stroke-width="1.5" stroke-dasharray="3,3" />
+              <circle cx="577" cy="805" r="16" fill="none" stroke="#10b981" stroke-width="1.5" />
+              <text x="577" y="828" font-size="10" font-weight="bold" fill="#10b981" text-anchor="middle">basketball court</text>
+            </g>
+
+            <!-- SOUTH PARKING TEXT -->
+            <text x="630" y="900" font-size="28" font-weight="bold" font-style="italic" fill="var(--foreground)" opacity="0.8">Parking</text>
+
+            <!-- ================= ENTRY / EXIT DIAMONDS ================= -->
+
+            <!-- NORTH ENTRY (Node 0) -->
+            <g id="node0" class="node-target" onclick="nodeClicked(0)">
+              <polygon points="610,95 625,110 610,125 595,110" fill="var(--background)" stroke="var(--foreground)" stroke-width="3.5" />
+              <text x="610" y="85" font-size="12" font-weight="bold" fill="var(--foreground)" text-anchor="middle">North Entry</text>
+            </g>
+
+            <!-- WEST ENTRY (Node 2) -->
+            <g id="node2" class="node-target" onclick="nodeClicked(2)">
+              <polygon points="200,205 215,220 200,235 185,220" fill="var(--background)" stroke="var(--foreground)" stroke-width="3.5" />
+              <text x="140" y="224" font-size="12" font-weight="bold" fill="var(--foreground)" text-anchor="end">West Entry</text>
+            </g>
+
+            <!-- SOUTH ENTRY (Node 23) -->
+            <g id="node23" class="node-target" onclick="nodeClicked(23)">
+              <polygon points="380,940 398,960 380,980 362,960" fill="var(--background)" stroke="var(--foreground)" stroke-width="4" />
+              <text x="380" y="1005" font-size="14" font-weight="bold" fill="var(--foreground)" text-anchor="middle">South Entry / Campus Exit</text>
+            </g>
+
+            <!-- ================= DYNAMIC ROUTE OVERLAY ================= -->
+            <g id="routeOverlayLayer">
+              <path id="routeGlowPath" d="" fill="none" stroke="#38bdf8" stroke-width="12" opacity="0.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" />
+              <path id="routeCorePath" d="" fill="none" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" class="route-active" />
+              <g id="routeMarkersGroup"></g>
+            </g>
+
+          </svg>
+        </div>
+
+        <!-- Map Footer Legend -->
+        <div class="mt-4 pt-3 border-t border-[var(--card-border)] flex flex-wrap items-center justify-between text-xs text-[var(--muted-foreground)] gap-2">
+          <div class="flex items-center gap-4">
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rotate-45 border-2 border-current inline-block"></span> Diamonds = Gates / Entries</span>
+            <span class="flex items-center gap-1.5"><span class="w-3.5 h-3.5 rounded-full border-2 border-current inline-block"></span> Circles = Academic Buildings (1 to 5)</span>
+            <span class="flex items-center gap-1.5"><span class="w-4 h-2.5 rounded bg-sky-500/20 border border-sky-500 inline-block"></span> Blue = Canteens</span>
+            <span class="flex items-center gap-1.5"><span class="w-4 h-2.5 rounded bg-emerald-500/20 border border-emerald-500 inline-block"></span> Green = Sports</span>
+          </div>
+          <div>
+            <span>Walking Speed: <strong>80 m/min</strong></span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Interactive Logic & Dijkstra Algorithm -->
+  <script>
+    // Theme Management
+    const themeToggle = document.getElementById('themeToggle');
+    const themeIcon = document.getElementById('themeIcon');
+    let isDark = true;
+
+    themeToggle.addEventListener('click', () => {
+      isDark = !isDark;
+      if (isDark) {
+        document.body.classList.remove('light');
+        themeIcon.textContent = '☀️';
+      } else {
+        document.body.classList.add('light');
+        themeIcon.textContent = '🌙';
+      }
+    });
+
+    // Campus Locations Data (Matches C Program exactly)
+    const locations = [
+      { id: 0, name: "North Entry / Top Road", bldg: 0, cat: "entry", x: 610, y: 110 },
+      { id: 1, name: "Eco Road East Junction", bldg: 0, cat: "junction", x: 610, y: 220 },
+      { id: 2, name: "Eco Road West Entry", bldg: 0, cat: "entry", x: 200, y: 220 },
+      { id: 3, name: "Eco Campus Road Junction", bldg: 0, cat: "junction", x: 380, y: 310 },
+      { id: 4, name: "Building 1 - Eco Campus", bldg: 1, cat: "building", x: 475, y: 265 },
+      { id: 5, name: "Eco Canteen", bldg: 1, cat: "canteen", x: 382, y: 255 },
+      { id: 6, name: "Auditorium", bldg: 1, cat: "facility", x: 377, y: 294 },
+      { id: 7, name: "Campus Recruitment Centre", bldg: 1, cat: "facility", x: 440, y: 280 },
+      { id: 8, name: "Main Road - Building 2 Junction", bldg: 0, cat: "junction", x: 380, y: 410 },
+      { id: 9, name: "Building 2", bldg: 2, cat: "building", x: 490, y: 410 },
+      { id: 10, name: "BTech Department", bldg: 2, cat: "dept", x: 505, y: 400 },
+      { id: 11, name: "BSc Department", bldg: 2, cat: "dept", x: 505, y: 420 },
+      { id: 12, name: "Building 3 Road Junction", bldg: 0, cat: "junction", x: 380, y: 520 },
+      { id: 13, name: "Building 3", bldg: 3, cat: "building", x: 650, y: 520 },
+      { id: 14, name: "Small Canteen", bldg: 3, cat: "canteen", x: 650, y: 575 },
+      { id: 15, name: "Building 4 Road Junction", bldg: 0, cat: "junction", x: 610, y: 635 },
+      { id: 16, name: "Building 4", bldg: 4, cat: "building", x: 650, y: 635 },
+      { id: 17, name: "Stationery Shop - Ground Floor", bldg: 4, cat: "facility", x: 660, y: 645 },
+      { id: 18, name: "Building 5 Road Junction", bldg: 0, cat: "junction", x: 380, y: 720 },
+      { id: 19, name: "Building 5", bldg: 5, cat: "building", x: 480, y: 720 },
+      { id: 20, name: "Library", bldg: 5, cat: "facility", x: 495, y: 710 },
+      { id: 21, name: "Accounts Section", bldg: 5, cat: "facility", x: 495, y: 720 },
+      { id: 22, name: "SFC Counters", bldg: 5, cat: "facility", x: 495, y: 730 },
+      { id: 23, name: "South Entry / Campus Exit", bldg: 0, cat: "entry", x: 380, y: 960 },
+      { id: 24, name: "Parking - Eco Campus Side", bldg: 0, cat: "parking", x: 672, y: 185 },
+      { id: 25, name: "Parking - Building 2", bldg: 0, cat: "parking", x: 520, y: 470 },
+      { id: 26, name: "Parking - Building 3/4 Side", bldg: 0, cat: "parking", x: 500, y: 590 },
+      { id: 27, name: "Basketball Court", bldg: 0, cat: "sports", x: 577, y: 805 }
+    ];
+
+    const N = locations.length;
+    const INF = 999999;
+    const WALKING_SPEED = 80.0; // metres per minute
+
+    // Initialize Adjacency Matrix
+    const graph = Array.from({ length: N }, () => Array(N).fill(INF));
+    for (let i = 0; i < N; i++) graph[i][i] = 0;
+
+    function addRoad(u, v, d) {
+      graph[u][v] = d;
+      graph[v][u] = d;
+    }
+
+    // Exact Roads
+    addRoad(0, 1, 80);     // North entry to east road junction
+    addRoad(1, 2, 150);    // Road connecting toward west entry
+    addRoad(2, 3, 100);    // West entry to Eco campus junction
+    addRoad(1, 3, 70);     // Road around the Eco Campus area
+    addRoad(3, 4, 25);     // Eco Campus (Building 1)
+    addRoad(4, 5, 15);     // Eco Canteen
+    addRoad(4, 6, 20);     // Auditorium
+    addRoad(4, 7, 25);     // Campus Recruitment Centre
+    addRoad(3, 8, 100);    // Main road to B2 junction
+    addRoad(8, 9, 25);     // Building 2
+    addRoad(9, 10, 10);    // BTech Dept
+    addRoad(9, 11, 15);    // BSc Dept
+    addRoad(8, 25, 20);    // Parking near B2
+    addRoad(8, 12, 160);   // Main road to B3 junction
+    addRoad(12, 13, 20);   // Building 3
+    addRoad(13, 14, 10);   // Small Canteen
+    addRoad(12, 26, 25);   // Parking near B3/B4
+    addRoad(12, 15, 35);   // Side road to B4
+    addRoad(15, 16, 15);   // Building 4
+    addRoad(16, 17, 5);    // Stationery shop
+    addRoad(12, 18, 130);  // Main road to B5
+    addRoad(18, 19, 20);   // Building 5
+    addRoad(19, 20, 10);   // Library
+    addRoad(19, 21, 10);   // Accounts Section
+    addRoad(19, 22, 15);   // SFC Counters
+    addRoad(18, 23, 170);  // South entry / exit
+    addRoad(18, 27, 45);   // Basketball court
+    addRoad(3, 24, 25);    // Parking Eco side
+
+    // CONNECTING ROADS: BUILDING 3, 4, AND 5
+    addRoad(14, 16, 15);   // Small Canteen (14) to Building 4 (16)
+    addRoad(16, 19, 35);   // Road in front of Building 5 connecting Building 4 & Building 5!
+    addRoad(19, 27, 30);   // Road in front of Building 5 down to Basketball Court
+
+    // Populate Select Dropdowns
+    const startSelect = document.getElementById('startSelect');
+    const destSelect = document.getElementById('destSelect');
+
+    function populateDropdowns() {
+      const groups = {
+        "Campus Entries": [0, 2, 23],
+        "Academic Buildings": [4, 9, 13, 16, 19],
+        "Departments & Facilities": [5, 6, 7, 10, 11, 14, 17, 20, 21, 22],
+        "Parking & Sports": [24, 25, 26, 27],
+        "Road Junctions": [1, 3, 8, 12, 15, 18]
+      };
+
+      let html = '';
+      for (const [groupName, ids] of Object.entries(groups)) {
+        html += `<optgroup label="${groupName}">`;
+        for (const id of ids) {
+          const loc = locations[id];
+          const bldgSuffix = loc.bldg > 0 ? ` (Bldg ${loc.bldg})` : '';
+          html += `<option value="${id}">${loc.name}${bldgSuffix}</option>`;
+        }
+        html += `</optgroup>`;
+      }
+
+      startSelect.innerHTML = html;
+      destSelect.innerHTML = html;
+
+      // Default selection: Building 5 (19) -> Building 3 (13)
+      startSelect.value = "19";
+      destSelect.value = "13";
+    }
+
+    // Dijkstra Algorithm
+    function dijkstra(src, dest) {
+      const dist = Array(N).fill(INF);
+      const parent = Array(N).fill(-1);
+      const visited = Array(N).fill(false);
+
+      dist[src] = 0;
+
+      for (let count = 0; count < N; count++) {
+        let u = -1;
+        let minD = INF;
+        for (let i = 0; i < N; i++) {
+          if (!visited[i] && dist[i] < minD) {
+            minD = dist[i];
+            u = i;
+          }
+        }
+
+        if (u === -1 || u === dest) break;
+        visited[u] = true;
+
+        for (let v = 0; v < N; v++) {
+          if (!visited[v] && graph[u][v] !== INF && dist[u] + graph[u][v] < dist[v]) {
+            dist[v] = dist[u] + graph[u][v];
+            parent[v] = u;
+          }
+        }
+      }
+
+      if (dist[dest] === INF) return null;
+
+      const path = [];
+      let curr = dest;
+      while (curr !== -1) {
+        path.push(curr);
+        if (curr === src) break;
+        curr = parent[curr];
+      }
+      path.reverse();
+
+      return { path, distance: dist[dest] };
+    }
+
+    // Directional instruction generator
+    function getInstruction(fromId, toId) {
+      const from = locations[fromId];
+      const to = locations[toId];
+
+      if ((fromId === 16 && toId === 19) || (fromId === 19 && toId === 16)) {
+        return "Take direct avenue in front of Building 5 connecting Buildings 4 & 5";
+      }
+      if ((fromId === 14 && toId === 16) || (fromId === 16 && toId === 14)) {
+        return "Walk along Eastern Avenue between Small Canteen and Building 4";
+      }
+      if ((fromId === 13 && toId === 14) || (fromId === 14 && toId === 13)) {
+        return "Follow Eastern Avenue between Building 3 and Small Canteen";
+      }
+      if ((fromId === 19 && toId === 27) || (fromId === 27 && toId === 19)) {
+        return "Follow walkway from Building 5 to Basketball Court";
+      }
+      if (from.cat === "canteen" || from.cat === "dept" || from.cat === "facility") {
+        return `Exit ${from.name} towards ${to.name}`;
+      }
+      if (to.id === 8 || to.id === 12 || to.id === 18) {
+        return `Follow Main Road to ${to.name}`;
+      }
+      if (from.id === 3 && to.id === 8) {
+        return "Walk South along Central Main Road";
+      }
+      if (to.cat === "building") {
+        return `Enter ${to.name} main portal`;
+      }
+      if (to.cat === "entry") {
+        return `Proceed to ${to.name} gate`;
+      }
+      return `Walk along paved corridor to ${to.name}`;
+    }
+
+    // Accurate street-snapped polyline generator
+    function generateSvgPath(path) {
+      if (path.length === 0) return "";
+      const points = [];
+
+      for (let i = 0; i < path.length; i++) {
+        const u = path[i];
+        if (i === 0) {
+          points.push({ x: locations[u].x, y: locations[u].y });
+        } else {
+          const prev = path[i - 1];
+
+          // Between Building 4 (16) and Building 5 (19) via front road and Eastern Ave
+          if ((prev === 16 && u === 19) || (prev === 19 && u === 16)) {
+            if (prev === 19) {
+              points.push({ x: 480, y: 720 });
+              points.push({ x: 610, y: 720 });
+              points.push({ x: 610, y: 635 });
+              points.push({ x: 650, y: 635 });
+            } else {
+              points.push({ x: 650, y: 635 });
+              points.push({ x: 610, y: 635 });
+              points.push({ x: 610, y: 720 });
+              points.push({ x: 480, y: 720 });
+            }
+          }
+          // Between Small Canteen (14) and Building 4 (16)
+          else if ((prev === 14 && u === 16) || (prev === 16 && u === 14)) {
+            if (prev === 14) {
+              points.push({ x: 610, y: 575 });
+              points.push({ x: 610, y: 635 });
+              points.push({ x: 650, y: 635 });
+            } else {
+              points.push({ x: 610, y: 635 });
+              points.push({ x: 610, y: 575 });
+              points.push({ x: 650, y: 575 });
+            }
+          }
+          // Between Building 3 (13) and Small Canteen (14)
+          else if ((prev === 13 && u === 14) || (prev === 14 && u === 13)) {
+            if (prev === 13) {
+              points.push({ x: 610, y: 520 });
+              points.push({ x: 610, y: 575 });
+              points.push({ x: 650, y: 575 });
+            } else {
+              points.push({ x: 610, y: 575 });
+              points.push({ x: 610, y: 520 });
+              points.push({ x: 650, y: 520 });
+            }
+          }
+          // Between Main Road (12) and Building 3 (13)
+          else if ((prev === 12 && u === 13) || (prev === 13 && u === 12)) {
+            if (prev === 12) {
+              points.push({ x: 610, y: 520 });
+              points.push({ x: 650, y: 520 });
+            } else {
+              points.push({ x: 610, y: 520 });
+              points.push({ x: 380, y: 520 });
+            }
+          }
+          else {
+            points.push({ x: locations[u].x, y: locations[u].y });
+          }
+        }
+      }
+
+      let d = `M ${points[0].x} ${points[0].y}`;
+      for (let j = 1; j < points.length; j++) {
+        d += ` L ${points[j].x} ${points[j].y}`;
+      }
+      return d;
+    }
+
+    // Find and Render Route
+    function calculateAndDisplayRoute() {
+      const startId = parseInt(startSelect.value);
+      const destId = parseInt(destSelect.value);
+
+      if (startId === destId) {
+        alert("Starting location and destination are the same! Please pick different spots.");
+        return;
+      }
+
+      const res = dijkstra(startId, destId);
+      if (!res) {
+        alert("No connecting road found between these two locations.");
+        return;
+      }
+
+      const { path, distance } = res;
+      const walkTime = (distance / WALKING_SPEED).toFixed(1);
+      const steps = Math.round(distance * 1.33);
+      const calories = Math.round(distance * 0.08);
+
+      // Display Metrics
+      document.getElementById('routeMetrics').classList.remove('hidden');
+      document.getElementById('metricDist').textContent = `${distance} m`;
+      document.getElementById('metricTime').textContent = `${walkTime} min`;
+      document.getElementById('metricSteps').textContent = `~${steps}`;
+      document.getElementById('metricCal').textContent = `${calories} kcal`;
+
+      // Display Turn-by-Turn Steps
+      document.getElementById('directionsCard').classList.remove('hidden');
+      document.getElementById('stepCountBadge').textContent = `${path.length} Waypoints`;
+
+      const stepsList = document.getElementById('stepsList');
+      let stepsHtml = '';
+      let cumDist = 0;
+
+      for (let i = 0; i < path.length; i++) {
+        const currId = path[i];
+        const currLoc = locations[currId];
+        const isStart = (i === 0);
+        const isEnd = (i === path.length - 1);
+        let legDist = 0;
+        let legInstruction = "";
+
+        if (i > 0) {
+          legDist = graph[path[i - 1]][currId];
+          cumDist += legDist;
+          legInstruction = getInstruction(path[i - 1], currId);
+        }
+
+        let badgeBg = "bg-slate-500/10 text-slate-400 border-slate-500/20";
+        let marker = `[${i + 1}]`;
+        if (isStart) {
+          badgeBg = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+          marker = "🟢 START";
+        } else if (isEnd) {
+          badgeBg = "bg-rose-500/20 text-rose-400 border-rose-500/30";
+          marker = "🏁 GOAL";
+        }
+
+        stepsHtml += `
+          <div class="p-3 rounded-xl bg-[var(--background)] border border-[var(--card-border)] hover:border-sky-500/40 transition-colors">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold px-2 py-0.5 rounded-md border ${badgeBg}">${marker}</span>
+              <span class="text-xs text-[var(--muted-foreground)] font-mono">${i > 0 ? `+${legDist}m` : '0m'}</span>
+            </div>
+            <div class="mt-1.5 font-semibold text-xs text-[var(--foreground)]">
+              ${currLoc.name}
+            </div>
+            ${i > 0 ? `
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1 flex items-center gap-1.5">
+                <span>↳</span> ${legInstruction}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+      stepsList.innerHTML = stepsHtml;
+
+      // Draw SVG Route
+      const svgPathData = generateSvgPath(path);
+      const glowPath = document.getElementById('routeGlowPath');
+      const corePath = document.getElementById('routeCorePath');
+      glowPath.setAttribute('d', svgPathData);
+      corePath.setAttribute('d', svgPathData);
+
+      // Render Markers on Map
+      const markersGroup = document.getElementById('routeMarkersGroup');
+      let markersHtml = '';
+
+      path.forEach((nodeId, idx) => {
+        const loc = locations[nodeId];
+        const isStart = (idx === 0);
+        const isEnd = (idx === path.length - 1);
+
+        if (isStart) {
+          markersHtml += `
+            <g transform="translate(${loc.x}, ${loc.y})" class="pin-bounce">
+              <circle r="18" fill="#10b981" fill-opacity="0.3" class="pulse-ring" />
+              <circle r="10" fill="#10b981" stroke="#ffffff" stroke-width="2.5" />
+              <text y="3" text-anchor="middle" font-size="8" font-weight="bold" fill="#ffffff">S</text>
+              <rect x="-24" y="-32" width="48" height="18" rx="4" fill="#10b981" />
+              <text y="-20" text-anchor="middle" font-size="9" font-weight="bold" fill="#ffffff">START</text>
+            </g>
+          `;
+        } else if (isEnd) {
+          markersHtml += `
+            <g transform="translate(${loc.x}, ${loc.y})" class="pin-bounce">
+              <circle r="18" fill="#f43f5e" fill-opacity="0.3" class="pulse-ring" />
+              <circle r="10" fill="#f43f5e" stroke="#ffffff" stroke-width="2.5" />
+              <text y="3" text-anchor="middle" font-size="8" font-weight="bold" fill="#ffffff">D</text>
+              <rect x="-22" y="-32" width="44" height="18" rx="4" fill="#f43f5e" />
+              <text y="-20" text-anchor="middle" font-size="9" font-weight="bold" fill="#ffffff">DEST</text>
+            </g>
+          `;
+        } else {
+          markersHtml += `
+            <g transform="translate(${loc.x}, ${loc.y})">
+              <circle r="7" fill="#38bdf8" stroke="#0f172a" stroke-width="2" />
+              <text y="2.5" text-anchor="middle" font-size="7" font-weight="bold" fill="#0f172a">${idx + 1}</text>
+            </g>
+          `;
+        }
+      });
+
+      markersGroup.innerHTML = markersHtml;
+    }
+
+    // Click Landmark on SVG
+    let clickState = 0;
+    function nodeClicked(id) {
+      if (clickState === 0) {
+        startSelect.value = id;
+        clickState = 1;
+      } else {
+        destSelect.value = id;
+        clickState = 0;
+        calculateAndDisplayRoute();
+      }
+    }
+
+    function setRoute(start, end) {
+      startSelect.value = start;
+      destSelect.value = end;
+      calculateAndDisplayRoute();
+    }
+
+    // Event Listeners
+    document.getElementById('findRouteBtn').addEventListener('click', calculateAndDisplayRoute);
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      document.getElementById('routeGlowPath').setAttribute('d', '');
+      document.getElementById('routeCorePath').setAttribute('d', '');
+      document.getElementById('routeMarkersGroup').innerHTML = '';
+      document.getElementById('routeMetrics').classList.add('hidden');
+      document.getElementById('directionsCard').classList.add('hidden');
+    });
+
+    document.getElementById('swapBtn').addEventListener('click', () => {
+      const temp = startSelect.value;
+      startSelect.value = destSelect.value;
+      destSelect.value = temp;
+      calculateAndDisplayRoute();
+    });
+
+    // Initialize
+    populateDropdowns();
+    calculateAndDisplayRoute();
+  </script>
+</body>
+</html>
